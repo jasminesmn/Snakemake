@@ -1,0 +1,91 @@
+rule all:
+    input:
+        expand("bngsa_nietinfected_{nummer}.QC", nummer=[1, 2]),
+        expand("bngsa_nietinfected_{nummer}_trimmed.QC", nummer=[1, 2]),
+        "sluipwesp_consensus.fa",
+        "infected_sluipwest_analyse.txt"       
+        
+rule QC:
+    input:
+        reads="/exports/bngp_data/reads/bngsa_nietinfected_{nummer}.fastq",
+    output:
+        qc="bngsa_nietinfected_{nummer}.QC",
+    script:
+        "QualityControl.py"
+
+rule trimming:
+    input:
+        fw="/exports/bngp_data/reads/bngsa_nietinfected_1.fastq",
+        rv="/exports/bngp_data/reads/bngsa_nietinfected_2.fastq"
+    output:
+        fw="bngsa_nietinfected_1_trimmed.fastq",
+        rv="bngsa_nietinfected_2_trimmed.fastq"
+    script:
+        "Trimming.py"
+
+rule QC_trimmed:
+    input:
+        reads="bngsa_nietinfected_{nummer}_trimmed.fastq"
+    output:
+        qc="bngsa_nietinfected_{nummer}_trimmed.QC"
+    script:
+        "QualityControl.py"
+
+rule alignment_bowtie2:
+    input:
+        reads_fw=rules.trimming.output.fw,
+        reads_rv=rules.trimming.output.rv,
+	refgenome="/exports/bngp_data/refgenome/lclav_genome.fa"
+    output:
+        "alignment.sam"
+    shell:
+        """
+        bowtie2-build {input.refgenome} lclav_genome
+        mkdir lclav_genome
+        export BOWTIE2_INDEXES=lclav_genome/
+        mv *.bt2 $BOWTIE2_INDEXES
+        bowtie2 -x lclav_genome -1 {input.reads_fw} -2 {input.reads_rv} -S {output}
+        """
+
+rule variantenlijst:
+    input:
+        rules.alignment_bowtie2.output
+    output:
+       compressed="alignment_varianten.vcf.gz",
+       uncompressed="alignment_varianten.vcf"
+    shell:
+        """
+        samtools view -S -b {input} > alignment.bam
+        samtools sort alignment.bam -o alignment.sorted.bam
+        cp /exports/bngp_data/refgenome/lclav_genome.fa lclav_genome_home.fa
+        samtools faidx lclav_genome_home.fa 
+        bcftools mpileup -Ou -f lclav_genome_home.fa alignment.sorted.bam | bcftools call -mv -Ov -o {output.uncompressed}
+        bcftools convert -Oz alignment_varianten.vcf -o {output.compressed}
+        """         
+
+rule consensus:
+    input:
+        rules.variantenlijst.output.compressed
+    output:
+        "sluipwesp_consensus.fa"
+    shell:
+        """
+        bcftools index {input}
+        bcftools consensus -f lclav_genome_home.fa {input} -o {output}
+        """
+
+rule analyse:
+    input:
+        vcf=rules.variantenlijst.output.uncompressed
+    output:
+        analyse_file="infected_sluipwest_analyse.txt"
+    script:
+        "Analyse.py"
+
+rule help:
+    input:
+        "help.txt"
+    shell:
+        """
+        cat {input}
+        """
