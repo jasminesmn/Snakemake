@@ -84,7 +84,7 @@ rule analyse:
 
 rule help:
     input:
-        "help.txt"
+        "README.txt"
     shell:
         """
         cat {input}
